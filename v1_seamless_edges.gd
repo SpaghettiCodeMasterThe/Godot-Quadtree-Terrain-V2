@@ -58,8 +58,7 @@ func update_quadtree():
 		child.free()
 		
 	next_quadtree.clear()
-	aabb_parent.clear()
-	# quadtree_pool.clear()
+	#quadtree_pool.clear()
 	
 	# Create quadtree an place all futur chunks in next_quadtree
 	var root_data = QuadtreeData.new(root_aabb, 0, null, [])
