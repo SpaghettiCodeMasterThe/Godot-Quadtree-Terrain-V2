@@ -5,13 +5,12 @@ var terrain_size = 100000
 var terrain_altitude = 8000
 var terrain_noise = FastNoiseLite.new()
 var terrain_shader = preload("res://shaders/terrain_auto.gdshader")
-var terrain_resolution = 4
+var terrain_resolution = 32
 
 var next_quadtree = {}
 var quadtree_pool = {}
-var quadtree_depth = 4
+var quadtree_depth = 5
 var root_aabb = AABB(Vector3.ZERO, Vector3.ONE * terrain_size)#
-var aabb_parent = {}
 
 var camera : Camera3D
 var camera_last_position : Vector3
@@ -60,7 +59,6 @@ func update_quadtree():
 	next_quadtree.clear()
 	#quadtree_pool.clear()
 	
-	# Create quadtree an place all futur chunks in next_quadtree
 	var root_data = QuadtreeData.new(root_aabb, 0, null, [])
 	subdivide_quadtree(root_data)
 	
@@ -73,10 +71,9 @@ func update_quadtree():
 		sorted_aabbs.append([aabb, next_quadtree[aabb].depth])
 	sorted_aabbs.sort_custom(func(a, b): return a[1] < b[1])
 	
-	for aabb_depth in sorted_aabbs: # Process lowest depth first
+	for aabb_depth in sorted_aabbs: # Process lowest depth first to avoid interpolation with old heightmap
 		var aabb = aabb_depth[0]
 		var data = next_quadtree[aabb]
-		print("depth ", data.depth)
 		data.modified_heightmap = modify_heightmap(data)
 		
 	for aabb in next_quadtree:
@@ -177,43 +174,31 @@ func modify_heightmap(data: QuadtreeData) -> Array:
 				var vertex = Vector3(x * n_steps, n_heightmap[z][x], z * n_steps) + n_data.aabb.position
 				border_points[direction].append(vertex)
 		
-	
-	#print(" ")
-	#print("aabb ", aabb)
-	#print("local position, ", local_position)
-	#print("neigbors, ", neighbors)
-	
-	var new_heightmap = []
-	new_heightmap.resize(terrain_resolution)
-	
 	for z in range(terrain_resolution):
-		new_heightmap[z] = []
-		new_heightmap[z].resize(terrain_resolution)
 		for x in range(terrain_resolution):
 			var vertex = Vector3(x * steps, heightmap[z][x], z * steps)
 			var new_height = heightmap[z][x]
 			var vertex_world = vertex + aabb.position
-			var is_border = false #( x == 0 and z == 0 or x == 0 and z == terrain_resolution - 1 or x == terrain_resolution - 1 and z == 0 or x == terrain_resolution - 1 and z == terrain_resolution - 1 )
 			
-			if x == 0 and neighbors.has("left") and not is_border:
+			if x == 0 and neighbors.has("left"):
 				var closest_pair = get_two_closest_points_2d(vertex_world, border_points["left"])
 				new_height = interpolate_height_2d(vertex_world, closest_pair)
 				
-			if x == terrain_resolution-1 and neighbors.has("right") and not is_border:
+			if x == terrain_resolution-1 and neighbors.has("right"):
 				var closest_pair = get_two_closest_points_2d(vertex_world, border_points["right"])
 				new_height = interpolate_height_2d(vertex_world, closest_pair)
 				
-			if z == 0 and neighbors.has("top") and not is_border:
+			if z == 0 and neighbors.has("top"):
 				var closest_pair = get_two_closest_points_2d(vertex_world, border_points["top"])
 				new_height = interpolate_height_2d(vertex_world, closest_pair)
 				
-			if z == terrain_resolution-1 and neighbors.has("bottom") and not is_border:
+			if z == terrain_resolution-1 and neighbors.has("bottom"):
 				var closest_pair = get_two_closest_points_2d(vertex_world, border_points["bottom"])
 				new_height = interpolate_height_2d(vertex_world, closest_pair)
 			
-			new_heightmap[z][x] = new_height
+			heightmap[z][x] = new_height
 	
-	return new_heightmap
+	return heightmap
 	
 func get_neighbors(data) -> Dictionary:
 	var aabb = data.aabb
@@ -221,17 +206,17 @@ func get_neighbors(data) -> Dictionary:
 	var local_position = data.local_position
 	var max_try = 10
 	var neighbors = {}
-	var current_data = data.parent_data
-	var current_aabb = current_data.aabb
-	var current_depth = current_data.depth
+	var parent_data = data.parent_data
+	var parent_aabb = parent_data.aabb
+	var parent_depth = parent_data.depth
 	
-	while current_depth > 0 and max_try > 0 and neighbors.size() <= 2: # 2 possible neighbors max
+	while parent_depth > 0 and max_try > 0 and neighbors.size() <= 2: # 2 possible neighbors max
 		max_try -= 1
 		var neighbors_offset = {
-			"top" : Vector3(0,0,-current_aabb.size.z),
-			"bottom" : Vector3(0,0,current_aabb.size.z),
-			"left" : Vector3(-current_aabb.size.x,0,0),
-			"right" : Vector3(current_aabb.size.x,0,0)
+			"top" : Vector3(0,0,-parent_aabb.size.z),
+			"bottom" : Vector3(0,0,parent_aabb.size.z),
+			"left" : Vector3(-parent_aabb.size.x,0,0),
+			"right" : Vector3(parent_aabb.size.x,0,0)
 		}
 		for direction in neighbors_offset:
 			if neighbors.has(direction):
@@ -240,7 +225,7 @@ func get_neighbors(data) -> Dictionary:
 				continue
 				
 			var offset = neighbors_offset[direction]
-			var neighbor_aabb = AABB(current_aabb.position + offset, current_aabb.size)
+			var neighbor_aabb = AABB(parent_aabb.position + offset, parent_aabb.size)
 			
 			if not next_quadtree.has(neighbor_aabb):
 				continue
@@ -258,9 +243,9 @@ func get_neighbors(data) -> Dictionary:
 				if is_equal_approx(aabb.position.x + aabb.size.x, neighbor_aabb.position.x):
 					neighbors[direction] = neighbor_aabb
 					
-		current_data = current_data.parent_data
-		current_depth = current_data.depth
-		current_aabb = current_data.aabb
+		parent_data = parent_data.parent_data
+		parent_depth = parent_data.depth
+		parent_aabb = parent_data.aabb
 
 	return neighbors
 	
